@@ -160,13 +160,28 @@ integration('DSH rc.6 integration', () => {
         workdir: directory,
         run_in_background: false,
         sandbox_permissions: 'workspace-write',
-        justification: 'x',
+        justification: '',
       },
       agent: fullAgent,
       signal: new AbortController().signal,
     })
     assert.equal(narrower.isError, false, text(narrower))
     assert.match(text(narrower), /^PATH$/m)
+
+    const widerWithEmptyReason = await executeScheduled(ctx, {
+      callId: CallId('bash-wider-empty-reason'),
+      name: 'bash',
+      arguments: {
+        command: "printf 'must-not-run'",
+        description: 'preserve validation for a genuine escalation',
+        sandbox_permissions: 'danger-full-access',
+        justification: '',
+      },
+      agent: agent(),
+      signal: new AbortController().signal,
+    })
+    assert.equal(widerWithEmptyReason.isError, true)
+    assert.match(text(widerWithEmptyReason), /invalid justification/)
 
     const wider = await execute('bash-wider', 'danger-full-access', agent())
     assert.equal(wider.isError, true)

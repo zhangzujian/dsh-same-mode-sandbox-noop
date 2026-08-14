@@ -19,9 +19,12 @@ runtime then executes the call under its standing policy. For example, a
 `workspace-write` request in a `danger-full-access` session is not an
 escalation, so the redundant pair is removed.
 
-Genuinely wider requests, unknown modes, malformed argument pairs, empty
-justifications, unrelated tools, and calls without escalation fields pass to
-DSH unchanged. Disposal restores the original runtime methods.
+Genuinely wider requests, unknown modes, malformed argument pairs, unrelated
+tools, and calls without escalation fields pass to DSH unchanged. For a known
+non-escalating request, an empty justification is removed with the redundant
+permission fields before DSH validates it; for a genuinely wider request, the
+same empty justification remains subject to DSH's original validation.
+Disposal restores the original runtime methods.
 
 This is an out-of-tree compatibility workaround. Prefer a DSH release that
 handles non-escalating requests in the shared sandbox escalation layer when one

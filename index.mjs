@@ -21,7 +21,7 @@ function requestedMode(input) {
   const args = input.arguments
   if (args === null || typeof args !== 'object' || Array.isArray(args)) return false
   if (typeof args.sandbox_permissions !== 'string') return false
-  if (typeof args.justification !== 'string' || args.justification.trim().length === 0) return false
+  if (typeof args.justification !== 'string') return false
   return args.sandbox_permissions
 }
 

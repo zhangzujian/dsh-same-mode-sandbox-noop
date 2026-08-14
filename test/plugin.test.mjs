@@ -92,6 +92,20 @@ describe('same-mode-sandbox-noop', () => {
     assert.deepEqual(f.calls[0].arguments, { command: 'true' })
   })
 
+  it('removes an empty-justification request when it is not an escalation', () => {
+    const f = fixture({ mode: 'danger-full-access', sessionMode: 'danger-full-access' })
+    const input = execution({
+      command: "printenv | sed 's/=.*//' | LC_ALL=C sort",
+      sandbox_permissions: 'workspace-write',
+      justification: '',
+    }, f.agent, 'bash')
+    f.scheduler.prepare(input)
+    assert.deepEqual(f.calls[0].arguments, {
+      command: "printenv | sed 's/=.*//' | LC_ALL=C sort",
+    })
+    assert.equal(input.arguments.justification, '')
+  })
+
   it('removes narrower requests and preserves genuinely wider requests', () => {
     const full = fixture({ mode: 'danger-full-access' })
     const narrower = execution({ sandbox_permissions: 'workspace-write', justification: 'try narrower' })
@@ -107,6 +121,10 @@ describe('same-mode-sandbox-noop', () => {
     confined.runtime.execute(wider)
     assert.equal(confined.calls[0], wider)
 
+    const widerWithEmptyReason = execution({ sandbox_permissions: 'danger-full-access', justification: '' })
+    confined.runtime.execute(widerWithEmptyReason)
+    assert.equal(confined.calls[1], widerWithEmptyReason)
+
     const unknownRequest = execution({ sandbox_permissions: 'unknown', justification: 'unknown request' })
     full.runtime.execute(unknownRequest)
     assert.equal(full.calls[1], unknownRequest)
@@ -117,11 +135,10 @@ describe('same-mode-sandbox-noop', () => {
     assert.equal(unknownPolicy.calls[0], knownRequest)
   })
 
-  it('preserves missing, empty, unrelated, and non-object arguments', () => {
+  it('preserves missing, unrelated, and non-object arguments', () => {
     const cases = [
       execution({ sandbox_permissions: 'danger-full-access' }),
       execution({ justification: 'orphan reason' }),
-      execution({ sandbox_permissions: 'danger-full-access', justification: '  ' }),
       execution({ sandbox_permissions: 'danger-full-access', justification: 'valid' }, undefined, 'other'),
       execution(null),
     ]
