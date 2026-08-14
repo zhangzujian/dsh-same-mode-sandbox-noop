@@ -108,7 +108,7 @@ integration('DSH rc.6 integration', () => {
     await ctx.fiber.dispose()
   })
 
-  it('runs bash for a same-mode session override while preserving narrower and wider failures', async () => {
+  it('runs bash for equal and narrower session requests while preserving a wider failure', async () => {
     const ctx = await base('workspace-write')
     await ctx.plugin(LocalSubprocessRuntime)
     applyShellEnv(ctx)
@@ -135,9 +135,23 @@ integration('DSH rc.6 integration', () => {
     assert.equal(same.isError, false, text(same))
     assert.equal(text(same), 'plugin-ok')
 
-    const narrower = await execute('bash-narrower', 'workspace-write', fullAgent)
-    assert.equal(narrower.isError, true)
-    assert.match(text(narrower), /not strictly wider/)
+    const narrower = await ctx.tools.execute({
+      callId: CallId('bash-narrower'),
+      name: 'bash',
+      arguments: {
+        command: "printenv | sed 's/=.*//' | LC_ALL=C sort",
+        description: 'list environment variable names',
+        timeoutMs: 10000,
+        workdir: '/root/workspace',
+        run_in_background: false,
+        sandbox_permissions: 'workspace-write',
+        justification: 'x',
+      },
+      agent: fullAgent,
+      signal: new AbortController().signal,
+    })
+    assert.equal(narrower.isError, false, text(narrower))
+    assert.match(text(narrower), /^PATH$/m)
 
     const wider = await execute('bash-wider', 'danger-full-access', agent())
     assert.equal(wider.isError, true)

@@ -2,8 +2,8 @@
 
 A removable compatibility plugin for DeepSeek Harness / DSH `0.1.0-rc.6`.
 
-That release rejects a tool call when `sandbox_permissions` redundantly names
-the call's already-effective sandbox mode:
+That release rejects a tool call when `sandbox_permissions` names a mode that
+is already covered by the call's effective sandbox mode:
 
 ```text
 Error: sandbox escalation to "danger-full-access" is not strictly wider than
@@ -12,17 +12,19 @@ this call's current "danger-full-access" mode
 
 The plugin wraps `ctx.tools.execute()` before DSH snapshots and freezes tool
 arguments. For `bash`, `pwsh`, `write`, and `edit`, it removes the paired
-`sandbox_permissions` and `justification` fields only when the requested mode
-equals the calling session's effective mode. The original runtime then executes
-the call under its standing policy.
+`sandbox_permissions` and `justification` fields when the requested mode is
+equal to or narrower than the calling session's effective mode. The original
+runtime then executes the call under its standing policy. For example, a
+`workspace-write` request in a `danger-full-access` session is not an
+escalation, so the redundant pair is removed.
 
-Narrower requests, genuinely wider requests, malformed argument pairs, empty
+Genuinely wider requests, unknown modes, malformed argument pairs, empty
 justifications, unrelated tools, and calls without escalation fields pass to
 DSH unchanged. Disposal restores the original runtime method.
 
 This is an out-of-tree compatibility workaround. Prefer a DSH release that
-handles equal-mode requests in the shared sandbox escalation layer when one is
-available.
+handles non-escalating requests in the shared sandbox escalation layer when one
+is available.
 
 ## Install into a DSH profile
 

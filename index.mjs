@@ -1,12 +1,17 @@
 /**
- * Compatibility plugin for DSH versions that reject a redundant
- * `sandbox_permissions` request when it equals the call's effective mode.
+ * Compatibility plugin for DSH versions that reject a non-escalating
+ * `sandbox_permissions` request at or below the call's effective mode.
  */
 
 export const name = 'same-mode-sandbox-noop'
 export const inject = ['tools', 'sandboxPolicy']
 
 const ESCALATING_TOOLS = new Set(['bash', 'pwsh', 'write', 'edit'])
+const MODE_RANK = new Map([
+  ['read-only', 0],
+  ['workspace-write', 1],
+  ['danger-full-access', 2],
+])
 const CORDIS_ORIGINAL = Symbol.for('cordis.original')
 
 /** Return the requested mode only for a well-formed candidate we may normalize. */
@@ -20,9 +25,10 @@ function requestedMode(input) {
 }
 
 /**
- * Wrap ToolRuntime before it snapshots and freezes tool arguments. Equal-mode
- * requests become ordinary standing-policy calls; every other call remains
- * byte-for-byte the original runtime's responsibility.
+ * Wrap ToolRuntime before it snapshots and freezes tool arguments. Known
+ * requests at or below the effective mode become ordinary standing-policy
+ * calls; genuinely wider and unknown requests remain the original runtime's
+ * responsibility.
  */
 export const apply = (ctx) => {
   // Use the underlying service implementations, not the injected context
@@ -40,7 +46,9 @@ export const apply = (ctx) => {
     const policy = sandboxPolicy.resolve(
       input?.agent === undefined ? {} : { session: input.agent.session },
     )
-    if (requested !== policy.mode) {
+    const requestedRank = MODE_RANK.get(requested)
+    const effectiveRank = MODE_RANK.get(policy.mode)
+    if (requestedRank === undefined || effectiveRank === undefined || requestedRank > effectiveRank) {
       return originalExecute.call(runtime, input)
     }
 

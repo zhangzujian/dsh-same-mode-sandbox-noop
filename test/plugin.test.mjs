@@ -73,16 +73,29 @@ describe('same-mode-sandbox-noop', () => {
     assert.deepEqual(f.calls[0].arguments, { command: 'true' })
   })
 
-  it('preserves narrower and genuinely wider requests', () => {
+  it('removes narrower requests and preserves genuinely wider requests', () => {
     const full = fixture({ mode: 'danger-full-access' })
     const narrower = execution({ sandbox_permissions: 'workspace-write', justification: 'try narrower' })
     full.runtime.execute(narrower)
-    assert.equal(full.calls[0], narrower)
+    assert.deepEqual(full.calls[0].arguments, {})
+    assert.deepEqual(narrower.arguments, {
+      sandbox_permissions: 'workspace-write',
+      justification: 'try narrower',
+    })
 
     const confined = fixture({ mode: 'workspace-write' })
     const wider = execution({ sandbox_permissions: 'danger-full-access', justification: 'needs wider access' })
     confined.runtime.execute(wider)
     assert.equal(confined.calls[0], wider)
+
+    const unknownRequest = execution({ sandbox_permissions: 'unknown', justification: 'unknown request' })
+    full.runtime.execute(unknownRequest)
+    assert.equal(full.calls[1], unknownRequest)
+
+    const unknownPolicy = fixture({ mode: 'unknown' })
+    const knownRequest = execution({ sandbox_permissions: 'workspace-write', justification: 'unknown policy' })
+    unknownPolicy.runtime.execute(knownRequest)
+    assert.equal(unknownPolicy.calls[0], knownRequest)
   })
 
   it('preserves missing, empty, unrelated, and non-object arguments', () => {
