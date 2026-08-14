@@ -2,38 +2,59 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { apply, inject, name } from '../index.mjs'
 
-function fixture({ mode = 'danger-full-access', sessionMode } = {}) {
-  const calls = []
-  const schedulerSymbol = Symbol('@deepseek-ai/dsh-tools.scheduler')
-  const scheduler = {
-    prepare(input) {
-      calls.push(input)
-      return input
-    },
-  }
-  const runtime = {
-    execute(input) {
-      calls.push(input)
-      return input
-    },
-    [schedulerSymbol]: scheduler,
-  }
+const SCHEDULER_SYMBOL = Symbol('@deepseek-ai/dsh-tools.scheduler')
+
+function cordisHarness({
+  mode = 'danger-full-access',
+  runtime,
+  execute = input => input,
+  prepare = input => input,
+  includeExecute = true,
+  includeScheduler = true,
+  registerEffect = factory => factory(),
+} = {}) {
+  const testRuntime = runtime ?? {}
+  const testScheduler = { prepare }
+  if (runtime === undefined && includeExecute) testRuntime.execute = execute
+  if (includeScheduler) testRuntime[SCHEDULER_SYMBOL] = testScheduler
+
+  let disposer
   const ctx = {
-    tools: runtime,
+    tools: testRuntime,
     sandboxPolicy: {
       resolve({ session } = {}) {
         return { mode: session?.mode ?? mode, workspaceRoot: '/workspace' }
       },
     },
-    effect(factory) { disposer = factory() },
+    effect(factory) { disposer = registerEffect(factory) },
   }
-  let disposer
   ctx.get = service => ctx[service]
+  return {
+    ctx,
+    runtime: testRuntime,
+    scheduler: testScheduler,
+    dispose: () => disposer(),
+  }
+}
+
+function fixture({ mode = 'danger-full-access', sessionMode } = {}) {
+  const calls = []
+  const testHarness = cordisHarness({
+    mode,
+    execute(input) {
+      calls.push(input)
+      return input
+    },
+    prepare(input) {
+      calls.push(input)
+      return input
+    },
+  })
   const agent = sessionMode === undefined ? undefined : { session: { mode: sessionMode } }
-  const original = runtime.execute
-  const originalPrepare = scheduler.prepare
-  apply(ctx)
-  return { calls, runtime, scheduler, original, originalPrepare, agent, dispose: () => disposer() }
+  const original = testHarness.runtime.execute
+  const originalPrepare = testHarness.scheduler.prepare
+  apply(testHarness.ctx)
+  return { ...testHarness, calls, original, originalPrepare, agent }
 }
 
 function execution(arguments_, agent, name_ = 'edit') {
@@ -53,54 +74,54 @@ describe('same-mode-sandbox-noop', () => {
   })
 
   it('removes a paired, non-empty same-mode request without mutating caller input', () => {
-    const f = fixture()
+    const testFixture = fixture()
     const args = {
       file_path: '/workspace/a',
       sandbox_permissions: 'danger-full-access',
       justification: 'already granted',
     }
     const input = execution(args)
-    f.runtime.execute(input)
+    testFixture.runtime.execute(input)
 
-    assert.equal(f.calls.length, 1)
-    assert.deepEqual(f.calls[0].arguments, { file_path: '/workspace/a' })
+    assert.equal(testFixture.calls.length, 1)
+    assert.deepEqual(testFixture.calls[0].arguments, { file_path: '/workspace/a' })
     assert.deepEqual(args, {
       file_path: '/workspace/a',
       sandbox_permissions: 'danger-full-access',
       justification: 'already granted',
     })
-    assert.notEqual(f.calls[0], input)
+    assert.notEqual(testFixture.calls[0], input)
   })
 
   it('uses the calling session effective mode', () => {
-    const f = fixture({ mode: 'workspace-write', sessionMode: 'danger-full-access' })
-    f.runtime.execute(execution({
+    const testFixture = fixture({ mode: 'workspace-write', sessionMode: 'danger-full-access' })
+    testFixture.runtime.execute(execution({
       command: 'true',
       sandbox_permissions: 'danger-full-access',
       justification: 'session override is already full access',
-    }, f.agent, 'bash'))
-    assert.deepEqual(f.calls[0].arguments, { command: 'true' })
+    }, testFixture.agent, 'bash'))
+    assert.deepEqual(testFixture.calls[0].arguments, { command: 'true' })
   })
 
   it('normalizes the Agent Loop scheduler preparation path', () => {
-    const f = fixture({ mode: 'workspace-write', sessionMode: 'danger-full-access' })
-    f.scheduler.prepare(execution({
+    const testFixture = fixture({ mode: 'workspace-write', sessionMode: 'danger-full-access' })
+    testFixture.scheduler.prepare(execution({
       command: 'true',
       sandbox_permissions: 'workspace-write',
       justification: 'already covered by the session',
-    }, f.agent, 'bash'))
-    assert.deepEqual(f.calls[0].arguments, { command: 'true' })
+    }, testFixture.agent, 'bash'))
+    assert.deepEqual(testFixture.calls[0].arguments, { command: 'true' })
   })
 
   it('removes an empty-justification request when it is not an escalation', () => {
-    const f = fixture({ mode: 'danger-full-access', sessionMode: 'danger-full-access' })
+    const testFixture = fixture({ mode: 'danger-full-access', sessionMode: 'danger-full-access' })
     const input = execution({
       command: "printenv | sed 's/=.*//' | LC_ALL=C sort",
       sandbox_permissions: 'workspace-write',
       justification: '',
-    }, f.agent, 'bash')
-    f.scheduler.prepare(input)
-    assert.deepEqual(f.calls[0].arguments, {
+    }, testFixture.agent, 'bash')
+    testFixture.scheduler.prepare(input)
+    assert.deepEqual(testFixture.calls[0].arguments, {
       command: "printenv | sed 's/=.*//' | LC_ALL=C sort",
     })
     assert.equal(input.arguments.justification, '')
@@ -143,9 +164,9 @@ describe('same-mode-sandbox-noop', () => {
       execution(null),
     ]
     for (const input of cases) {
-      const f = fixture()
-      f.runtime.execute(input)
-      assert.equal(f.calls[0], input)
+      const testFixture = fixture()
+      testFixture.runtime.execute(input)
+      assert.equal(testFixture.calls[0], input)
     }
   })
 
@@ -154,37 +175,125 @@ describe('same-mode-sandbox-noop', () => {
       execute(input) { return input }
     }
     const runtime = new Runtime()
+    const testHarness = cordisHarness({ runtime })
     const original = runtime.execute
-    let disposer
-    const ctx = {
-      tools: runtime,
-      sandboxPolicy: { resolve: () => ({ mode: 'danger-full-access' }) },
-      effect(factory) { disposer = factory() },
-    }
-    ctx.get = service => ctx[service]
-    apply(ctx)
+    apply(testHarness.ctx)
     assert.notEqual(runtime.execute, original)
     assert.equal(Object.hasOwn(runtime, 'execute'), true)
-    disposer()
+    testHarness.dispose()
     assert.equal(runtime.execute, original)
     assert.equal(Object.hasOwn(runtime, 'execute'), true)
   })
 
   it('restores the exact prior scheduler preparation method on disposal', () => {
-    const f = fixture()
-    assert.notEqual(f.scheduler.prepare, f.originalPrepare)
-    f.dispose()
-    assert.equal(f.scheduler.prepare, f.originalPrepare)
+    const testFixture = fixture()
+    assert.notEqual(testFixture.scheduler.prepare, testFixture.originalPrepare)
+    testFixture.dispose()
+    assert.equal(testFixture.scheduler.prepare, testFixture.originalPrepare)
+  })
+
+  it('fails loudly without execute and leaves the runtime installable', () => {
+    const testHarness = cordisHarness({ includeExecute: false })
+
+    assert.throws(
+      () => apply(testHarness.ctx),
+      /same-mode-sandbox-noop requires tools\.execute to be a function/,
+    )
+
+    testHarness.runtime.execute = input => input
+    assert.doesNotThrow(() => apply(testHarness.ctx))
+    testHarness.dispose()
+  })
+
+  it('fails loudly without rc.6 scheduler preparation and leaves the runtime installable', () => {
+    const testHarness = cordisHarness({ includeScheduler: false })
+
+    assert.throws(
+      () => apply(testHarness.ctx),
+      /same-mode-sandbox-noop requires the rc\.6 scheduler\.prepare entry point/,
+    )
+
+    testHarness.runtime[SCHEDULER_SYMBOL] = testHarness.scheduler
+    assert.doesNotThrow(() => apply(testHarness.ctx))
+    testHarness.dispose()
+  })
+
+  it('rolls back methods and the installation marker when apply fails', () => {
+    let failRegistration = true
+    const testHarness = cordisHarness({
+      registerEffect(factory) {
+        if (failRegistration) throw new Error('effect registration failed')
+        return factory()
+      },
+    })
+    const originalExecute = testHarness.runtime.execute
+    const originalPrepare = testHarness.scheduler.prepare
+
+    assert.throws(() => apply(testHarness.ctx), /effect registration failed/)
+    assert.equal(testHarness.runtime.execute, originalExecute)
+    assert.equal(testHarness.scheduler.prepare, originalPrepare)
+
+    failRegistration = false
+    assert.doesNotThrow(() => apply(testHarness.ctx))
+    testHarness.dispose()
+  })
+
+  it('fails loudly when installed twice on the same runtime', () => {
+    const testFixture = fixture()
+
+    assert.throws(
+      () => apply(testFixture.ctx),
+      /same-mode-sandbox-noop is already installed on this tool runtime/,
+    )
+
+    testFixture.dispose()
+    assert.doesNotThrow(() => apply(testFixture.ctx))
+  })
+
+  it('makes a captured scheduler wrapper preserve original rc.6 behavior after disposal', () => {
+    const testFixture = fixture()
+    const patchedPrepare = testFixture.scheduler.prepare
+    const laterPrepare = input => patchedPrepare(input)
+    testFixture.scheduler.prepare = laterPrepare
+    testFixture.dispose()
+
+    const input = execution({
+      command: 'true',
+      sandbox_permissions: 'danger-full-access',
+      justification: 'already granted',
+    }, undefined, 'bash')
+    testFixture.scheduler.prepare(input)
+
+    assert.equal(testFixture.scheduler.prepare, laterPrepare)
+    assert.equal(testFixture.calls[0], input)
+  })
+
+  it('makes a captured execute wrapper pass through unchanged after disposal', () => {
+    const testFixture = fixture()
+    const patchedExecute = testFixture.runtime.execute
+    const laterExecute = input => patchedExecute(input)
+    testFixture.runtime.execute = laterExecute
+    testFixture.dispose()
+
+    const input = execution({
+      file_path: '/workspace/a',
+      sandbox_permissions: 'danger-full-access',
+      justification: 'already granted',
+    })
+    testFixture.runtime.execute(input)
+
+    assert.equal(testFixture.runtime.execute, laterExecute)
+    assert.equal(testFixture.calls[0], input)
   })
 
   it('does not overwrite a later wrapper during disposal', () => {
-    const f = fixture()
-    const later = () => 'later'
+    const testFixture = fixture()
+    const laterExecute = () => 'later'
     const laterPrepare = () => 'later prepare'
-    f.runtime.execute = later
-    f.scheduler.prepare = laterPrepare
-    f.dispose()
-    assert.equal(f.runtime.execute, later)
-    assert.equal(f.scheduler.prepare, laterPrepare)
+    testFixture.runtime.execute = laterExecute
+    testFixture.scheduler.prepare = laterPrepare
+    testFixture.dispose()
+    assert.equal(testFixture.runtime.execute, laterExecute)
+    assert.equal(testFixture.scheduler.prepare, laterPrepare)
   })
 })

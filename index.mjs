@@ -13,6 +13,7 @@ const MODE_RANK = new Map([
   ['danger-full-access', 2],
 ])
 const CORDIS_ORIGINAL = Symbol.for('cordis.original')
+const INSTALLATION = Symbol.for('@zhangzujian/dsh-same-mode-sandbox-noop.installation')
 const SCHEDULER_DESCRIPTION = '@deepseek-ai/dsh-tools.scheduler'
 
 /** Return the requested mode only for a well-formed candidate we may normalize. */
@@ -49,11 +50,22 @@ export const apply = (ctx) => {
   const policyView = ctx.get('sandboxPolicy')
   const runtime = toolsView[CORDIS_ORIGINAL] ?? toolsView
   const sandboxPolicy = policyView[CORDIS_ORIGINAL] ?? policyView
+  if (runtime[INSTALLATION] !== undefined) {
+    throw new Error(`${name} is already installed on this tool runtime`)
+  }
+  if (typeof runtime.execute !== 'function') {
+    throw new Error(`${name} requires tools.execute to be a function`)
+  }
   const originalExecute = runtime.execute
   const scheduler = findScheduler(runtime)
-  const originalPrepare = scheduler?.prepare
+  if (scheduler === undefined) {
+    throw new Error(`${name} requires the rc.6 scheduler.prepare entry point`)
+  }
+  const originalPrepare = scheduler.prepare
+  const installation = { active: true }
 
   const normalize = (input) => {
+    if (!installation.active) return input
     const requested = requestedMode(input)
     if (requested === false) return input
     const policy = sandboxPolicy.resolve(
@@ -77,18 +89,24 @@ export const apply = (ctx) => {
   const patchedExecute = function (input) {
     return originalExecute.call(runtime, normalize(input))
   }
-  let patchedPrepare
-  if (originalPrepare !== undefined) {
-    patchedPrepare = function patchedPrepare(input) {
-      return originalPrepare.call(scheduler, normalize(input))
-    }
+  const patchedPrepare = function patchedPrepare(input) {
+    return originalPrepare.call(scheduler, normalize(input))
   }
 
-  runtime.execute = patchedExecute
-  if (patchedPrepare !== undefined) scheduler.prepare = patchedPrepare
   const dispose = () => {
+    installation.active = false
     if (runtime.execute === patchedExecute) runtime.execute = originalExecute
-    if (patchedPrepare !== undefined && scheduler.prepare === patchedPrepare) scheduler.prepare = originalPrepare
+    if (scheduler.prepare === patchedPrepare) scheduler.prepare = originalPrepare
+    if (runtime[INSTALLATION] === installation) delete runtime[INSTALLATION]
   }
-  ctx.effect(() => dispose, 'same-mode sandbox compatibility wrapper teardown')
+
+  try {
+    runtime[INSTALLATION] = installation
+    runtime.execute = patchedExecute
+    scheduler.prepare = patchedPrepare
+    ctx.effect(() => dispose, 'same-mode sandbox compatibility wrapper teardown')
+  } catch (error) {
+    dispose()
+    throw error
+  }
 }

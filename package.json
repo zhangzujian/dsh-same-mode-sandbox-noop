@@ -1,6 +1,6 @@
 {
   "name": "@zhangzujian/dsh-same-mode-sandbox-noop",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "DSH compatibility plugin that treats redundant non-escalating sandbox permission fields as a no-op",
   "type": "module",
   "main": "index.mjs",

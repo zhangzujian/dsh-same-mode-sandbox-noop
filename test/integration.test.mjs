@@ -73,15 +73,12 @@ integration('DSH rc.6 integration', () => {
   async function executeScheduled(ctx, input) {
     const scheduler = ctx.tools[TOOL_RUNTIME_SCHEDULER]
     const prepared = await scheduler.prepare(input)
-    if (prepared.kind === 'dispatch') {
-      const dispatched = await scheduler.dispatch(prepared.exec)
-      return dispatched.kind === 'post-result'
-        ? scheduler.finalize(prepared.exec, dispatched.result)
-        : scheduler.finish(prepared.exec, dispatched.result)
-    }
-    return prepared.kind === 'post-result'
-      ? scheduler.finalize(prepared.exec, prepared.result)
-      : scheduler.finish(prepared.exec, prepared.result)
+    const completed = prepared.kind === 'dispatch'
+      ? await scheduler.dispatch(prepared.exec)
+      : prepared
+    return completed.kind === 'post-result'
+      ? scheduler.finalize(prepared.exec, completed.result)
+      : scheduler.finish(prepared.exec, completed.result)
   }
 
   it('edits with a redundant full-access request and restores rc.6 behavior after disposal', async () => {
@@ -91,9 +88,8 @@ integration('DSH rc.6 integration', () => {
     await ctx.plugin(SandboxedFileSystem, { cwd: directory, diffBasisMaxBytes: 1024 * 1024 })
     applyToolFs(ctx, { readLimit: 2000, readMaxLineLength: 2000, readMaxBytes: 1024 * 1024, readStreamMinSize: 64 * 1024 })
 
-    const original = ctx.tools.execute
     const rawRuntime = ctx.tools[Symbol.for('cordis.original')]
-    const originalRaw = rawRuntime.execute
+    const scheduler = ctx.tools[TOOL_RUNTIME_SCHEDULER]
     const pluginFiber = await ctx.plugin(plugin)
     const input = suffix => ({
       callId: CallId(`edit-${suffix}`),
@@ -113,12 +109,24 @@ integration('DSH rc.6 integration', () => {
     assert.equal(success.isError, false, text(success))
     assert.equal(await readFile(target, 'utf8'), 'after\n')
 
+    const patchedExecute = rawRuntime.execute
+    const patchedPrepare = scheduler.prepare
+    const laterExecute = input_ => patchedExecute.call(rawRuntime, input_)
+    const laterPrepare = input_ => patchedPrepare.call(scheduler, input_)
+    rawRuntime.execute = laterExecute
+    scheduler.prepare = laterPrepare
+
     await pluginFiber.dispose()
-    assert.equal(rawRuntime.execute, originalRaw)
-    assert.equal(ctx.tools.execute.name, original.name)
-    const originalFailure = await ctx.tools.execute(input('original'))
-    assert.equal(originalFailure.isError, true)
-    assert.match(text(originalFailure), /not strictly wider/)
+    assert.equal(rawRuntime.execute, laterExecute)
+    assert.equal(scheduler.prepare, laterPrepare)
+
+    const executeFailure = await ctx.tools.execute(input('execute-after-disposal'))
+    assert.equal(executeFailure.isError, true)
+    assert.match(text(executeFailure), /not strictly wider/)
+
+    const prepareFailure = await executeScheduled(ctx, input('prepare-after-disposal'))
+    assert.equal(prepareFailure.isError, true)
+    assert.match(text(prepareFailure), /not strictly wider/)
     assert.equal(await readFile(target, 'utf8'), 'after\n')
     await ctx.fiber.dispose()
   })
