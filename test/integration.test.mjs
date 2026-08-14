@@ -142,7 +142,7 @@ integration('DSH rc.6 integration', () => {
         command: "printenv | sed 's/=.*//' | LC_ALL=C sort",
         description: 'list environment variable names',
         timeoutMs: 10000,
-        workdir: '/root/workspace',
+        workdir: directory,
         run_in_background: false,
         sandbox_permissions: 'workspace-write',
         justification: 'x',
