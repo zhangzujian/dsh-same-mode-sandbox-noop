@@ -13,6 +13,7 @@ const MODE_RANK = new Map([
   ['danger-full-access', 2],
 ])
 const CORDIS_ORIGINAL = Symbol.for('cordis.original')
+const SCHEDULER_DESCRIPTION = '@deepseek-ai/dsh-tools.scheduler'
 
 /** Return the requested mode only for a well-formed candidate we may normalize. */
 function requestedMode(input) {
@@ -24,11 +25,21 @@ function requestedMode(input) {
   return args.sandbox_permissions
 }
 
+/** Find rc.6's private Agent Loop scheduler without importing DSH internals. */
+function findScheduler(runtime) {
+  for (const symbol of Object.getOwnPropertySymbols(runtime)) {
+    if (symbol.description !== SCHEDULER_DESCRIPTION) continue
+    const scheduler = runtime[symbol]
+    if (scheduler !== null && typeof scheduler === 'object' && typeof scheduler.prepare === 'function') {
+      return scheduler
+    }
+  }
+}
+
 /**
- * Wrap ToolRuntime before it snapshots and freezes tool arguments. Known
- * requests at or below the effective mode become ordinary standing-policy
- * calls; genuinely wider and unknown requests remain the original runtime's
- * responsibility.
+ * Wrap both ToolRuntime entry points before either snapshots and freezes tool
+ * arguments. Direct callers use execute(); the rc.6 Agent Loop bypasses it and
+ * calls its private scheduler's prepare().
  */
 export const apply = (ctx) => {
   // Use the underlying service implementations, not the injected context
@@ -39,32 +50,45 @@ export const apply = (ctx) => {
   const runtime = toolsView[CORDIS_ORIGINAL] ?? toolsView
   const sandboxPolicy = policyView[CORDIS_ORIGINAL] ?? policyView
   const originalExecute = runtime.execute
+  const scheduler = findScheduler(runtime)
+  const originalPrepare = scheduler?.prepare
 
-  const patchedExecute = function (input) {
+  const normalize = (input) => {
     const requested = requestedMode(input)
-    if (requested === false) return originalExecute.call(runtime, input)
+    if (requested === false) return input
     const policy = sandboxPolicy.resolve(
       input?.agent === undefined ? {} : { session: input.agent.session },
     )
     const requestedRank = MODE_RANK.get(requested)
     const effectiveRank = MODE_RANK.get(policy.mode)
     if (requestedRank === undefined || effectiveRank === undefined || requestedRank > effectiveRank) {
-      return originalExecute.call(runtime, input)
+      return input
     }
 
     const normalizedArguments = { ...input.arguments }
     delete normalizedArguments.sandbox_permissions
     delete normalizedArguments.justification
-    return originalExecute.call(runtime, {
+    return {
       ...input,
       arguments: normalizedArguments,
-    })
+    }
+  }
+
+  const patchedExecute = function (input) {
+    return originalExecute.call(runtime, normalize(input))
+  }
+  let patchedPrepare
+  if (originalPrepare !== undefined) {
+    patchedPrepare = function patchedPrepare(input) {
+      return originalPrepare.call(scheduler, normalize(input))
+    }
   }
 
   runtime.execute = patchedExecute
+  if (patchedPrepare !== undefined) scheduler.prepare = patchedPrepare
   const dispose = () => {
-    if (runtime.execute !== patchedExecute) return
-    runtime.execute = originalExecute
+    if (runtime.execute === patchedExecute) runtime.execute = originalExecute
+    if (patchedPrepare !== undefined && scheduler.prepare === patchedPrepare) scheduler.prepare = originalPrepare
   }
   ctx.effect(() => dispose, 'same-mode sandbox compatibility wrapper teardown')
 }

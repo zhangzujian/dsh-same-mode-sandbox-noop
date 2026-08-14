@@ -4,11 +4,19 @@ import { apply, inject, name } from '../index.mjs'
 
 function fixture({ mode = 'danger-full-access', sessionMode } = {}) {
   const calls = []
+  const schedulerSymbol = Symbol('@deepseek-ai/dsh-tools.scheduler')
+  const scheduler = {
+    prepare(input) {
+      calls.push(input)
+      return input
+    },
+  }
   const runtime = {
     execute(input) {
       calls.push(input)
       return input
     },
+    [schedulerSymbol]: scheduler,
   }
   const ctx = {
     tools: runtime,
@@ -23,8 +31,9 @@ function fixture({ mode = 'danger-full-access', sessionMode } = {}) {
   ctx.get = service => ctx[service]
   const agent = sessionMode === undefined ? undefined : { session: { mode: sessionMode } }
   const original = runtime.execute
+  const originalPrepare = scheduler.prepare
   apply(ctx)
-  return { calls, runtime, original, agent, dispose: () => disposer() }
+  return { calls, runtime, scheduler, original, originalPrepare, agent, dispose: () => disposer() }
 }
 
 function execution(arguments_, agent, name_ = 'edit') {
@@ -69,6 +78,16 @@ describe('same-mode-sandbox-noop', () => {
       command: 'true',
       sandbox_permissions: 'danger-full-access',
       justification: 'session override is already full access',
+    }, f.agent, 'bash'))
+    assert.deepEqual(f.calls[0].arguments, { command: 'true' })
+  })
+
+  it('normalizes the Agent Loop scheduler preparation path', () => {
+    const f = fixture({ mode: 'workspace-write', sessionMode: 'danger-full-access' })
+    f.scheduler.prepare(execution({
+      command: 'true',
+      sandbox_permissions: 'workspace-write',
+      justification: 'already covered by the session',
     }, f.agent, 'bash'))
     assert.deepEqual(f.calls[0].arguments, { command: 'true' })
   })
@@ -134,11 +153,21 @@ describe('same-mode-sandbox-noop', () => {
     assert.equal(Object.hasOwn(runtime, 'execute'), true)
   })
 
+  it('restores the exact prior scheduler preparation method on disposal', () => {
+    const f = fixture()
+    assert.notEqual(f.scheduler.prepare, f.originalPrepare)
+    f.dispose()
+    assert.equal(f.scheduler.prepare, f.originalPrepare)
+  })
+
   it('does not overwrite a later wrapper during disposal', () => {
     const f = fixture()
     const later = () => 'later'
+    const laterPrepare = () => 'later prepare'
     f.runtime.execute = later
+    f.scheduler.prepare = laterPrepare
     f.dispose()
     assert.equal(f.runtime.execute, later)
+    assert.equal(f.scheduler.prepare, laterPrepare)
   })
 })

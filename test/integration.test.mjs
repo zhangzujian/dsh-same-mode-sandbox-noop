@@ -17,6 +17,7 @@ integration('DSH rc.6 integration', () => {
   let Context
   let SystemPrompt
   let ToolRuntime
+  let TOOL_RUNTIME_SCHEDULER
   let CallId
   let SandboxPolicyService
   let SandboxedFileSystem
@@ -31,7 +32,7 @@ integration('DSH rc.6 integration', () => {
   before(async () => {
     ;({ Context } = await packageImport('cordis'))
     ;({ SystemPrompt } = await packageImport('dsh-system-prompt'))
-    ;({ ToolRuntime } = await packageImport('dsh-tools'))
+    ;({ ToolRuntime, TOOL_RUNTIME_SCHEDULER } = await packageImport('dsh-tools'))
     ;({ CallId } = await packageImport('dsh-llm'))
     ;({ SandboxPolicyService } = await packageImport('dsh-sandbox-policy'))
     ;({ SandboxedFileSystem } = await packageImport('dsh-fs-sandbox'))
@@ -67,6 +68,20 @@ integration('DSH rc.6 integration', () => {
 
   function text(result) {
     return result.content.filter(block => block.type === 'text').map(block => block.text).join('')
+  }
+
+  async function executeScheduled(ctx, input) {
+    const scheduler = ctx.tools[TOOL_RUNTIME_SCHEDULER]
+    const prepared = await scheduler.prepare(input)
+    if (prepared.kind === 'dispatch') {
+      const dispatched = await scheduler.dispatch(prepared.exec)
+      return dispatched.kind === 'post-result'
+        ? scheduler.finalize(prepared.exec, dispatched.result)
+        : scheduler.finish(prepared.exec, dispatched.result)
+    }
+    return prepared.kind === 'post-result'
+      ? scheduler.finalize(prepared.exec, prepared.result)
+      : scheduler.finish(prepared.exec, prepared.result)
   }
 
   it('edits with a redundant full-access request and restores rc.6 behavior after disposal', async () => {
@@ -135,7 +150,7 @@ integration('DSH rc.6 integration', () => {
     assert.equal(same.isError, false, text(same))
     assert.equal(text(same), 'plugin-ok')
 
-    const narrower = await ctx.tools.execute({
+    const narrower = await executeScheduled(ctx, {
       callId: CallId('bash-narrower'),
       name: 'bash',
       arguments: {

@@ -10,8 +10,9 @@ Error: sandbox escalation to "danger-full-access" is not strictly wider than
 this call's current "danger-full-access" mode
 ```
 
-The plugin wraps `ctx.tools.execute()` before DSH snapshots and freezes tool
-arguments. For `bash`, `pwsh`, `write`, and `edit`, it removes the paired
+The plugin wraps both `ctx.tools.execute()` and the rc.6 Agent Loop scheduler's
+preparation entry point before DSH snapshots and freezes tool arguments. For
+`bash`, `pwsh`, `write`, and `edit`, it removes the paired
 `sandbox_permissions` and `justification` fields when the requested mode is
 equal to or narrower than the calling session's effective mode. The original
 runtime then executes the call under its standing policy. For example, a
@@ -20,7 +21,7 @@ escalation, so the redundant pair is removed.
 
 Genuinely wider requests, unknown modes, malformed argument pairs, empty
 justifications, unrelated tools, and calls without escalation fields pass to
-DSH unchanged. Disposal restores the original runtime method.
+DSH unchanged. Disposal restores the original runtime methods.
 
 This is an out-of-tree compatibility workaround. Prefer a DSH release that
 handles non-escalating requests in the shared sandbox escalation layer when one
