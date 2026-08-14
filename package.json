@@ -1,0 +1,46 @@
+{
+  "name": "@zhangzujian/dsh-same-mode-sandbox-noop",
+  "version": "0.1.0",
+  "description": "DSH compatibility plugin that treats redundant same-mode sandbox escalation fields as a no-op",
+  "type": "module",
+  "main": "index.mjs",
+  "exports": {
+    ".": "./index.mjs",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.mjs",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test",
+    "test:integration": "node --test test/integration.test.mjs"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "cordis",
+    "sandbox"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zhangzujian/dsh-same-mode-sandbox-noop.git"
+  },
+  "bugs": {
+    "url": "https://github.com/zhangzujian/dsh-same-mode-sandbox-noop/issues"
+  },
+  "homepage": "https://github.com/zhangzujian/dsh-same-mode-sandbox-noop#readme",
+  "engines": {
+    "node": ">=22"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

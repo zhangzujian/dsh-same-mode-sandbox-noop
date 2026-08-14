@@ -1,0 +1,3 @@
+- insert:
+    - id: same-mode-sandbox-noop
+      name: '@zhangzujian/dsh-same-mode-sandbox-noop'
